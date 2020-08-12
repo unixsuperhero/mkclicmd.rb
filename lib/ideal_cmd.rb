@@ -1,15 +1,64 @@
 
 
+class CmdArgs
+  attr_accessor :cloned_argv, :argv, :argf, :subcmd, :args,
+    :subcmd_and_args, :piped_data, :processed_subcmds
+
+  def initialize(argv=nil, piped_in=nil)
+    if ! argv.nil?
+      @cloned_argv = argv.clone
+      @subcmd_and_args = argv
+    else
+      @cloned_argv = ARGV.clone
+      @argv = [].concat(ARGV)
+      @subcmd_and_args = [].concat(ARGV)
+    end
+
+    if ! piped_in.nil?
+      @piped_data = piped_in
+    else
+      ARGV.clear
+      @piped_data = ARGF.read
+      ARGV.concat(@argv)
+    end
+
+    @argf = ARGF.clone
+    @subcmd, *@args = @subcmd_and_args
+  end
+
+  # def get_piped_data(piped_in=nil)
+  #   @piped_data = piped_in unless piped_in.nil?
+  #   @piped_data ||= STDIN.tty? ? nil : Proc.new{
+  #       bkup = ARGV.clone
+  #       ARGV.clear
+  #       data = ARGF.read
+  #       ARGV.concat(bkup)
+  #     }.call
+  # end
+
+  def subcmd_args
+    @subcmd_args ||= CmdArgs.new(args, piped_data)
+  end
+
+  def processed_subcmds
+    @processed_subcmds ||= []
+  end
+
+  def next
+    processed_subcmds.push(subcmd)
+    (@subcmd, *@args) = args
+  end
+end
 
 
 module IdealCmd
-  # def self.loading_files
-  #   @loading_files ||= []
-  # end
+  def self.loading_files
+    @loading_files ||= []
+  end
 
-  # def self.loading_file
-  #   loading_files.last
-  # end
+  def self.loading_file
+    loading_files.last
+  end
 
   def self.included(base)
     base.extend(ClassMethods)
@@ -60,11 +109,13 @@ module IdealCmd
     end
 
     def args_with_subcommand
-      [subcommand] + usable_args
+      arg_manager.subcmd_and_args
+      # [subcommand] + usable_args
     end
 
     def args_without_subcommand
-      usable_args
+      arg_manager.args
+      # usable_args
     end
 
     # def args_without_modifiers
@@ -79,8 +130,13 @@ module IdealCmd
       arg_manager.args
     end
 
+    def piped_data
+      arg_manager.piped_data
+    end
+
     def next_arg_manager
-      @next_arg_manager ||= arg_manager.next
+      #@next_arg_manager ||= arg_manager.next
+      @next_arg_manager ||= arg_manager.subcmd_args
     end
 
     def pre_run(&block)
@@ -93,19 +149,16 @@ module IdealCmd
         @pre_run_block.call(self)
       end
 
-      if arg_mgr.is_a?(ArgumentHelper)
+      if arg_mgr.is_a?(CmdArgs)
         @arg_manager = arg_mgr
-      elsif arg_mgr.nil?
-        @arg_manager = ArgumentHelper.from(ARGV.clone)
-      elsif arg_mgr
-        @arg_manager = ArgumentHelper.from(arg_mgr)
       else
-        @arg_manager = ArgumentHelper.next
+        @arg_manager = CmdArgs.new
       end
 
-      ArgumentHelper.order.push(Value.new(name: self.name, klass: self, data:
-                                          @arg_manager, manager: @arg_manager,
-                                          args: @arg_manager.args))
+      ### ArgumentHelper.order.push(Value.new(name: self.name, klass: self, data:
+      ###                                     @arg_manager, manager: @arg_manager,
+      ###                                     args: @arg_manager.args))
+
       # @arg_manager = ArgManager.setup(passed_args)
 
       # @all_args = passed_args
@@ -113,7 +166,7 @@ module IdealCmd
       # @usable_args = @all_args.take_while{|arg| arg[0] != ?@ }
       # @modifier_args = @all_args.drop_while{|arg| arg[0] != ?@ }
       # @original_args = @all_args
-      @subcommand_arg = arg_manager.subcommand
+      @subcommand_arg = arg_manager.subcmd
 
       @subcommand = subcommand_matcher.match(@subcommand_arg)
 
@@ -131,7 +184,7 @@ module IdealCmd
       }
     end
 
-    dm        ms              ef runner_type(code=runner)
+    def runner_type(code=runner)
       {}.tap{|types|
         types.merge!(subcommand_proc.object_id => format('%s (%s)', :subcommand.inspect, @subcommand.name.to_sym.inspect)) if subcommand_proc
         types.merge!(@dynamic_subcommand.object_id => :dynamic_subcommand) if @dynamic_subcommand
@@ -158,7 +211,10 @@ module IdealCmd
         special_modifiers: special_modifiers,
       )
 
-      if runner
+      return runner.call if runner
+
+      ### disabling hooks for now TEMPORARY MAYBE 2020-08-12
+      if 0 == 1 # if runner
         block_returned = nil
         hooks_returned = run_with_hooks{
           block_returned = runner.call
@@ -508,37 +564,6 @@ module IdealCmd
       end
     end
 
-    class CmdArgs
-      attr_accessor :cloned_argv, :argv, :argf, :subcmd, :args,
-        :subcmd_and_args, :piped_data, :processed_subcmds
-
-      def initialize(argv, piped_data)
-        @cloned_argv = ARGV.clone.freeze
-        @argv = ARGV.clone
-        @argf = ARGF.clone
-        @subcmd_and_args = (@subcmd, *@args) = argv
-
-        piped_data
-      end
-
-      def piped_data
-        @piped_data ||= STDIN.tty? ? nil : Proc.new{
-            bkup = ARGV.clone
-            ARGV.clear
-            data = ARGF.read
-            ARGV.concat(bkup)
-          }.call
-      end
-
-      def processed_subcmds
-        @processed_subcmds ||= []
-      end
-
-      def next
-        processed_subcmds.push(subcmd)
-        (@subcmd, *@args) = args
-      end
-    end
 
     class OptionSet
       class << self
@@ -567,6 +592,296 @@ end
 
 
 
+class NameMatcher
+  attr_accessor :name_map, :names
+
+  def initialize(hash)
+    @name_map = hash
+    @names = hash.keys
+  end
+
+  def name_groups
+    @name_map.keys.group_by{|k| @name_map[k] }.values.sort_by{|list| list.sort.first }
+  end
+
+  def usage_groups
+    name_groups.map do |names|
+      names.map{|n| [n, usages[n]] }.to_h
+    end
+  end
+
+  def grouped_by_values
+    @grouped_by_values ||= name_map.map{|k,v|
+      [v, names.select{|oname| name_map[oname] == v }]
+    }
+  end
+
+  def grouped_names
+    name_groups.flat_map{|list| list.map{|n| [n,list] } }.to_h
+  end
+
+#   def name_groups
+#     @name_groups ||= grouped_by_values.inject({}){|h,(k,grouped_names)|
+#       grouped_names.map{|name| h.merge!(name => grouped_names) }
+#       h
+#     }
+#   end
+
+  def partials
+    @partials ||= names.map{|name| [name, partials_for(name)] }.to_h
+  end
+
+  def partials_for(str)
+    str.chars.inject([]) do |arr,c|
+      arr.push((arr.last || '') + c)
+    end
+  end
+
+  def uniq_partials
+    @uniq_partials ||= names.map{|name|
+      other_partials = (names - grouped_names[name]).flat_map{|oname| partials[oname] }.sort.uniq
+      other_partials -= [name]
+      [name, partials[name] - other_partials]
+    }.to_h
+  end
+
+  def shortest_partials
+    @shortest_partials ||= names.map{|name|
+      [name, uniq_partials[name].min_by(&:length)]
+    }.to_h
+  end
+
+  def usages
+    @usages ||= names.map{|name|
+      shortest = shortest_partials[name]
+      next [name,name] if shortest == name
+      [name, format('%s[%s]', name[0,shortest.length], name[(shortest.length)..-1])]
+    }.to_h
+  end
+
+  def info
+    @info ||= name_groups.flat_map{|list|
+      list.map{|name|
+        [
+          name,
+          Value.new(
+            name: name,
+            data: name_map[name],
+            similar_names: list,
+            partials: partials[name],
+            matching_partials: uniq_partials[name],
+            shortest_partial: shortest_partials[name],
+            syntax: usages[name],
+            usage: usages[name],
+          )
+        ]
+      }
+    }.to_h
+  end
+
+  def match(str)
+    found = info.find{|name,info| info.matching_partials.include?(str) }
+    found.last if found
+  end
+
+  def match_name(str)
+    found = info.find{|name,info| info.matching_partials.include?(str) }
+    found.first if found
+  end
+
+  def match_data(str)
+    found = info.find{|name,info| info.matching_partials.include?(str) }
+    found.last.data if found
+  end
+end
+
+
+class Value
+  attr_reader :to_h
+
+  def initialize(hash)
+    @to_h = {}
+    merge(hash)
+  end
+
+  def merge(hash)
+    self.tap{|this|
+      @to_h.merge!(hash)
+      hash.each{|k,v|
+        define_singleton_method(k){ v }
+
+        define_singleton_method("#{k}="){|new_v|
+          @to_h.merge!(k => new_v)
+          define_singleton_method(k){ new_v }
+        }
+      }
+    }
+  end
+  alias_method :update, :merge
+
+  def delete(k)
+    self.tap{|this|
+      @to_h.delete(k)
+      instance_eval(format("undef %s", k)) if respond_to?(k)
+      instance_eval(format("undef %s=", k)) if respond_to?(k.to_s + ?=)
+    }
+  end
+  alias_method :unset, :delete
+
+  def set(k, v)
+    merge(k => v)
+  end
+
+  def get(k)
+    to_h[k]
+  end
+
+  def has?(k)
+    respond_to?(k)
+  end
+
+  def method_missing(name, *args)
+    super unless @to_h.respond_to?(name)
+
+    @to_h.send(name, *args)
+  end
+
+  def [](key)
+    get(key)
+  end
+
+  def []=(key,val)
+    val.tap{
+      @to_h.merge! key => val
+      define_singleton_method(key){ val }
+    }
+  end
+end
+
+class ProcessList
+  class ProcessInfo < Value; end
+
+  class << self
+    def list
+      @list ||= []
+    end
+
+    def running
+      @running ||= []
+    end
+
+    def current
+      @current = running[-1]
+    end
+
+    def finished
+      @finished ||= []
+    end
+
+    def add(opts={})
+      opts.merge! id: list.length, status: :running
+      new_process = ProcessInfo.new(opts)
+      list.push new_process
+      running.push new_process
+    end
+
+    def update(opts={})
+      current.update(opts)
+    end
+
+    def finalize(return_value=nil)
+      finalized_process = ProcessFinalizer.finalize(current, return_value)
+      finalized_process.return_value.tap{|retval|
+        current.update(modified_return_value: retval,
+                         # finalized_process.info.return_value,
+                       status: :finished)
+      }
+    end
+
+    def finish!
+      finished.push running.pop
+    end
+  end
+
+  class ProcessFinalizer
+    class << self
+      def finalize(info, return_value)
+        new(info, return_value).tap(&:finalize)
+      end
+    end
+
+    attr_accessor :info, :return_value
+    attr_reader :object
+    def initialize(info, return_value)
+      @info, @return_value = info, return_value
+      @object = info.object
+    end
+
+    def finalize
+      info.update(
+        return_value: return_value,
+        status: :finalizing,
+      )
+
+      process_modifiers
+      process_special_modifiers
+
+      @info.update(return_value: @return_value)
+    end
+
+    def process_modifiers
+      found = object.modifiers.map{|mod,block|
+        args = ArgumentHelper.modifiers.map(&:first)
+        index = args.rindex(mod)
+        next if index.nil?
+
+        arg_name, opts = arg_info = ArgumentHelper.modifiers.delete_at(index)
+        [
+          mod,
+          Value.new(
+            name: mod,
+            block: block,
+            info: arg_info,
+            arg_name: arg_name,
+            opts: opts,
+          )
+        ]
+      }.compact.to_h
+
+      @return_value = found.inject(@return_value){|retval,(name,handler)|
+        handler.block.call(retval,*handler.opts)
+      }
+      @info.update(return_value: @return_value)
+      @return_value
+    end
+
+    def process_special_modifiers
+      found = object.special_modifiers.map{|mod,block|
+        args = ArgumentHelper.modifiers.map(&:first)
+        index = args.rindex(mod)
+        next if index.nil?
+
+        arg_name, opts = arg_info = ArgumentHelper.modifiers.delete_at(index)
+        [
+          mod,
+          Value.new(
+            name: mod,
+            block: block,
+            info: arg_info,
+            arg_name: arg_name,
+            opts: opts,
+          )
+        ]
+      }.compact.to_h
+
+      @return_value = found.inject(@return_value){|retval,(name,handler)|
+        handler.block.call(retval, opts)
+      }
+      @info.update(return_value: @return_value)
+      @return_value
+    end
+  end
+end
 
 
 

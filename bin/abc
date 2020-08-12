@@ -1,0 +1,55 @@
+#!/usr/bin/env ruby
+
+#############################################
+##                                         ##
+## This is a cmd: abc                      ##
+##                                         ##
+##   It takes 3 (optional) subcmds:        ##
+##                                         ##
+##   1> abc a    # any arguments go here   ##
+##   2> abc b    # any arguments go here   ##
+##   3> abc c    # any arguments go here   ##
+##                                         ##
+##   ..and optionally, no subcommands...   ##
+##                                         ##
+##   0> abc      # any arguments go here   ##
+##                                         ##
+#############################################
+
+require './lib/ideal_cmd.rb'
+
+class BaseCmd
+  include IdealCmd
+  self.subcommand_file = __FILE__
+
+  register_subcommand(:a) do
+    puts 'this is subcmd a'
+    puts({
+      subcmd: arg_manager.subcmd,
+      args: args,
+      piped_data: piped_data,
+    })
+  end
+
+  register_subcommand(:b) do
+    puts 'this is subcmd b'
+    puts args
+  end
+
+  register_subcommand(:c) do
+    puts 'this is subcmd c'
+    puts args
+  end
+
+  no_subcommand do
+    puts 'so it runs, at least it does with no subcommand'
+  end
+end
+
+
+
+BaseCmd.run
+
+
+
+
