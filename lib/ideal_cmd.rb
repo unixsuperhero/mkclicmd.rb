@@ -7,6 +7,7 @@ class CmdArgs
   def initialize(argv=nil, piped_in=nil)
     if ! argv.nil?
       @cloned_argv = argv.clone
+      @argv = argv
       @subcmd_and_args = argv
     else
       @cloned_argv = ARGV.clone
@@ -18,8 +19,8 @@ class CmdArgs
       @piped_data = piped_in
     else
       ARGV.clear
-      @piped_data = ARGF.read
-      ARGV.concat(@argv)
+      @piped_data = ARGF.read if ! STDIN.tty?
+      ARGV.concat(@argv || [])
     end
 
     @argf = ARGF.clone
@@ -433,6 +434,13 @@ module IdealCmd
       @no_subcommand = @dynamic_subcommand = block
     end
 
+    def reset_subcommands
+      @subcommands = {}
+      @no_subcommand = nil
+      @dynamic_subcommand = nil
+      @subcommand_handlers = {}
+    end
+
     def no_subcommand(&block)
       @no_subcommand = block
     end
@@ -543,7 +551,7 @@ module IdealCmd
       original_handler = handler.is_a?(Proc) ? handler.call(self) : handler
       block = Proc.new{
         handler = handler.call(self) if handler.is_a?(Proc)
-        handler.send(:run)
+        handler.send(:run, arg_manager.subcmd_args)
       }
       # original_handler.subcommand_file ||= file if file != nil &&
       #   original_handler.respond_to?(:subcommand_file=)

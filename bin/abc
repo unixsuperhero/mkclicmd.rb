@@ -16,6 +16,7 @@
 ##                                         ##
 #############################################
 
+require 'pry'
 require './lib/ideal_cmd.rb'
 
 class BaseCmd
@@ -44,6 +45,50 @@ class BaseCmd
   no_subcommand do
     puts 'so it runs, at least it does with no subcommand'
   end
+
+  class SubCmdWithSubCmds
+    include IdealCmd
+
+    # by using the subcommand sh (i.e. $> abc sh [args_here])
+    # you are telling BaseCmd to use this class to handle it and
+    # and subcmds it might receive
+
+    register_subcommand(:ls) {
+      if args.count > 0
+        system('ls', *args)
+      else
+        system('ls')
+      end
+
+      puts
+      puts "specifically called the 'ls' subcommand"
+      puts
+    }
+
+    dynamic_subcommand {
+      puts
+      puts "called the sh command with an"
+      puts "unknown subcommand but this subcmd has"
+      puts "a dynamic_subcommand block to process"
+      puts "any unknown subcommands"
+      puts
+
+      puts "unknown subcommand: #{@arg_manager.subcmd}"
+      puts "args: #{args.inspect}"
+      puts
+
+      x = 10 * 10
+      x = 10 * 10
+
+      binding.pry
+
+
+      x = 10 * 10
+      x = 10 * 10
+    }
+  end
+
+  register_subcommand_handler(SubCmdWithSubCmds, :sh)
 end
 
 
